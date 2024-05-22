@@ -69,6 +69,8 @@ import (
 
 const (
 	ChainDBNamespace = "eth/db/chaindata/"
+	JournalFileName  = "trie.journal"
+	ChainData        = "chaindata"
 )
 
 // Config contains the configuration options of the ETH protocol.
@@ -137,8 +139,7 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 	}
 
 	// Assemble the Ethereum object
-	chainDb, err := stack.OpenAndMergeDatabase("chaindata", config.DatabaseCache, config.DatabaseHandles,
-		config.DatabaseFreezer, config.DatabaseDiff, ChainDBNamespace, false, config.PersistDiff, config.PruneAncientData)
+	chainDb, err := stack.OpenAndMergeDatabase(ChainData, ChainDBNamespace, false, config)
 	if err != nil {
 		return nil, err
 	}
@@ -178,25 +179,25 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 	}
 	// Override the chain config with provided settings.
 	var overrides core.ChainOverrides
-	if config.OverrideShanghai != nil {
-		chainConfig.ShanghaiTime = config.OverrideShanghai
-		overrides.OverrideShanghai = config.OverrideShanghai
-	}
-	if config.OverrideKepler != nil {
-		chainConfig.KeplerTime = config.OverrideKepler
-		overrides.OverrideKepler = config.OverrideKepler
-	}
 	if config.OverrideCancun != nil {
 		chainConfig.CancunTime = config.OverrideCancun
 		overrides.OverrideCancun = config.OverrideCancun
+	}
+	if config.OverrideHaber != nil {
+		chainConfig.HaberTime = config.OverrideHaber
+		overrides.OverrideHaber = config.OverrideHaber
 	}
 	if config.OverrideVerkle != nil {
 		chainConfig.VerkleTime = config.OverrideVerkle
 		overrides.OverrideVerkle = config.OverrideVerkle
 	}
-	if config.OverrideFeynman != nil {
-		chainConfig.FeynmanTime = config.OverrideFeynman
-		overrides.OverrideFeynman = config.OverrideFeynman
+
+	// startup ancient freeze
+	if err = chainDb.SetupFreezerEnv(&ethdb.FreezerEnv{
+		ChainCfg:         chainConfig,
+		BlobExtraReserve: config.BlobExtraReserve,
+	}); err != nil {
+		return nil, err
 	}
 
 	networkID := config.NetworkId
@@ -247,6 +248,16 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 		}
 	}
 	var (
+		journalFilePath string
+		path            string
+	)
+	if stack.CheckIfMultiDataBase() {
+		path = ChainData + "/state"
+	} else {
+		path = ChainData
+	}
+	journalFilePath = stack.ResolvePath(path) + "/" + JournalFileName
+	var (
 		vmConfig = vm.Config{
 			EnablePreimageRecording: config.EnablePreimageRecording,
 		}
@@ -263,6 +274,8 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 			StateHistory:        config.StateHistory,
 			StateScheme:         config.StateScheme,
 			PathSyncFlush:       config.PathSyncFlush,
+			JournalFilePath:     journalFilePath,
+			JournalFile:         config.JournalFileEnabled,
 		}
 	)
 	bcOps := make([]core.BlockChainOption, 0)

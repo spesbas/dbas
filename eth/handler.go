@@ -33,7 +33,6 @@ import (
 	"github.com/ethereum/go-ethereum/core/monitor"
 	"github.com/ethereum/go-ethereum/core/rawdb"
 	"github.com/ethereum/go-ethereum/core/txpool"
-	"github.com/ethereum/go-ethereum/core/txpool/legacypool"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/eth/downloader"
 	"github.com/ethereum/go-ethereum/eth/fetcher"
@@ -219,7 +218,7 @@ func newHandler(config *handlerConfig) (*handler, error) {
 			}
 			h.snapSync.Store(true)
 			log.Warn("Switch sync mode from full sync to snap sync", "reason", "snap sync incomplete")
-		} else if !h.chain.HasState(fullBlock.Root) {
+		} else if !h.chain.NoTries() && !h.chain.HasState(fullBlock.Root) {
 			h.snapSync.Store(true)
 			log.Warn("Switch sync mode from full sync to snap sync", "reason", "head state missing")
 		}
@@ -319,7 +318,34 @@ func newHandler(config *handlerConfig) (*handler, error) {
 		}
 		return h.chain.InsertChain(blocks)
 	}
-	h.blockFetcher = fetcher.NewBlockFetcher(false, nil, h.chain.GetBlockByHash, validator, h.BroadcastBlock,
+
+	broadcastBlockWithCheck := func(block *types.Block, propagate bool) {
+		// All the block fetcher activities should be disabled
+		// after the transition. Print the warning log.
+		if h.merger.PoSFinalized() {
+			log.Warn("Unexpected validation activity", "hash", block.Hash(), "number", block.Number())
+			return
+		}
+		// Reject all the PoS style headers in the first place. No matter
+		// the chain has finished the transition or not, the PoS headers
+		// should only come from the trusted consensus layer instead of
+		// p2p network.
+		if beacon, ok := h.chain.Engine().(*beacon.Beacon); ok {
+			if beacon.IsPoSHeader(block.Header()) {
+				log.Warn("unexpected post-merge header")
+				return
+			}
+		}
+		if propagate {
+			if err := core.IsDataAvailable(h.chain, block); err != nil {
+				log.Error("Propagating block with invalid sidecars", "number", block.Number(), "hash", block.Hash(), "err", err)
+				return
+			}
+		}
+		h.BroadcastBlock(block, propagate)
+	}
+
+	h.blockFetcher = fetcher.NewBlockFetcher(false, nil, h.chain.GetBlockByHash, validator, broadcastBlockWithCheck,
 		heighter, finalizeHeighter, nil, inserter, h.removePeer)
 
 	fetchTx := func(peer string, hashes []common.Hash) error {
@@ -332,7 +358,7 @@ func newHandler(config *handlerConfig) (*handler, error) {
 	addTxs := func(peer string, txs []*types.Transaction) []error {
 		errors := h.txpool.Add(txs, false, false)
 		for _, err := range errors {
-			if err == legacypool.ErrInBlackList {
+			if err == txpool.ErrInBlackList {
 				accountBlacklistPeerCounter.Inc(1)
 				p := h.peers.peer(peer)
 				if p != nil {
@@ -795,6 +821,7 @@ func (h *handler) BroadcastBlock(block *types.Block, propagate bool) {
 		} else {
 			transfer = peers[:int(math.Sqrt(float64(len(peers))))]
 		}
+
 		for _, peer := range transfer {
 			peer.AsyncSendNewBlock(block, td)
 		}

@@ -402,7 +402,7 @@ func (p *BlockPruner) backUpOldDb(name string, cache, handles int, namespace str
 
 	var oldOffSet uint64
 	if interrupt {
-		// The interrupt scecario within this function is specific for old and new ancientDB exsisted concurrently,
+		// The interrupt scecario within this function is specific for old and new ancientDB existed concurrently,
 		// should use last version of offset for oldAncientDB, because current offset is
 		// actually of the new ancientDB_Backup, but what we want is the offset of ancientDB being backup.
 		oldOffSet = rawdb.ReadOffSetOfLastAncientFreezer(chainDb)
@@ -453,8 +453,11 @@ func (p *BlockPruner) backUpOldDb(name string, cache, handles int, namespace str
 		if td == nil {
 			return consensus.ErrUnknownAncestor
 		}
+		// if there has blobs, it needs to back up too.
+		blobs := rawdb.ReadBlobSidecars(chainDb, blockHash, blockNumber)
+		block = block.WithSidecars(blobs)
 		// Write into new ancient_back db.
-		if _, err := rawdb.WriteAncientBlocks(frdbBack, []*types.Block{block}, []types.Receipts{receipts}, td); err != nil {
+		if _, err := rawdb.WriteAncientBlocksWithBlobs(frdbBack, []*types.Block{block}, []types.Receipts{receipts}, td); err != nil {
 			log.Error("failed to write new ancient", "error", err)
 			return err
 		}

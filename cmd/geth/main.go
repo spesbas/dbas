@@ -25,6 +25,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/ethereum/go-ethereum/params"
+
 	"github.com/ethereum/go-ethereum/accounts"
 	"github.com/ethereum/go-ethereum/accounts/keystore"
 	"github.com/ethereum/go-ethereum/cmd/utils"
@@ -70,11 +72,13 @@ var (
 		utils.USBFlag,
 		utils.SmartCardDaemonPathFlag,
 		utils.RialtoHash,
-		utils.OverrideShanghai,
-		utils.OverrideKepler,
 		utils.OverrideCancun,
+		utils.OverrideHaber,
 		utils.OverrideVerkle,
-		utils.OverrideFeynman,
+		utils.OverrideFullImmutabilityThreshold,
+		utils.OverrideMinBlocksForBlobRequests,
+		utils.OverrideDefaultExtraReserveForBlobRequests,
+		utils.OverrideBreatheBlockInterval,
 		utils.EnablePersonal,
 		utils.TxPoolLocalsFlag,
 		utils.TxPoolNoLocalsFlag,
@@ -101,6 +105,7 @@ var (
 		utils.TransactionHistoryFlag,
 		utils.StateHistoryFlag,
 		utils.PathDBSyncFlag,
+		utils.JournalFileFlag,
 		utils.LightServeFlag,       // deprecated
 		utils.LightIngressFlag,     // deprecated
 		utils.LightEgressFlag,      // deprecated
@@ -142,8 +147,10 @@ var (
 		// utils.MinerNewPayloadTimeout,
 		utils.NATFlag,
 		utils.NoDiscoverFlag,
+		utils.PeerFilterPatternsFlag,
 		utils.DiscoveryV4Flag,
 		utils.DiscoveryV5Flag,
+		utils.InstanceFlag,
 		utils.LegacyDiscoveryV5Flag, // deprecated
 		utils.NetrestrictFlag,
 		utils.NodeKeyFileFlag,
@@ -172,6 +179,7 @@ var (
 		utils.VoteJournalDirFlag,
 		utils.LogDebugFlag,
 		utils.LogBacktraceAtFlag,
+		utils.BlobExtraReserveFlag,
 	}, utils.NetworkFlags, utils.DatabaseFlags)
 
 	rpcFlags = []cli.Flag{
@@ -450,6 +458,10 @@ func startNode(ctx *cli.Context, stack *node.Node, backend ethapi.Backend, isCon
 		// Set the gas price to the limits from the CLI and start mining
 		gasprice := flags.GlobalBig(ctx, utils.MinerGasPriceFlag.Name)
 		ethBackend.TxPool().SetGasTip(gasprice)
+		gasCeil := ethBackend.Miner().GasCeil()
+		if gasCeil > params.SystemTxsGas {
+			ethBackend.TxPool().SetMaxGas(gasCeil - params.SystemTxsGas)
+		}
 		if err := ethBackend.StartMining(); err != nil {
 			utils.Fatalf("Failed to start mining: %v", err)
 		}

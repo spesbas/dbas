@@ -76,6 +76,7 @@ Remove blockchain and state databases`,
 			dbCompactCmd,
 			dbGetCmd,
 			dbDeleteCmd,
+			dbDeleteTrieStateCmd,
 			dbInspectTrieCmd,
 			dbPutCmd,
 			dbGetSlotsCmd,
@@ -205,6 +206,15 @@ corruption if it is aborted during execution'!`,
 		}, utils.NetworkFlags, utils.DatabaseFlags),
 		Description: `This command deletes the specified database key from the database.
 WARNING: This is a low-level operation which may cause database corruption!`,
+	}
+	dbDeleteTrieStateCmd = &cli.Command{
+		Action: dbDeleteTrieState,
+		Name:   "delete-trie-state",
+		Usage:  "Delete all trie state key-value pairs from the database and the ancient state. Does not support hash-based state scheme.",
+		Flags: flags.Merge([]cli.Flag{
+			utils.SyncModeFlag,
+		}, utils.NetworkFlags, utils.DatabaseFlags),
+		Description: `This command deletes all trie state key-value pairs from the database and the ancient state.`,
 	}
 	dbPutCmd = &cli.Command{
 		Action:    dbPut,
@@ -386,8 +396,8 @@ func inspectTrie(ctx *cli.Context) error {
 	var headerBlockHash common.Hash
 	if ctx.NArg() >= 1 {
 		if ctx.Args().Get(0) == "latest" {
-			headerHash := rawdb.ReadHeadHeaderHash(db)
-			blockNumber = *(rawdb.ReadHeaderNumber(db, headerHash))
+			headerHash := rawdb.ReadHeadHeaderHash(db.BlockStore())
+			blockNumber = *(rawdb.ReadHeaderNumber(db.BlockStore(), headerHash))
 		} else if ctx.Args().Get(0) == "snapshot" {
 			trieRootHash = rawdb.ReadSnapshotRoot(db)
 			blockNumber = math.MaxUint64
@@ -426,7 +436,7 @@ func inspectTrie(ctx *cli.Context) error {
 		var config *triedb.Config
 		if dbScheme == rawdb.PathScheme {
 			config = &triedb.Config{
-				PathDB: pathdb.ReadOnly,
+				PathDB: utils.PathDBConfigAddJournalFilePath(stack, pathdb.ReadOnly),
 			}
 		} else if dbScheme == rawdb.HashScheme {
 			config = triedb.HashDefaults
@@ -509,7 +519,7 @@ func checkStateContent(ctx *cli.Context) error {
 	db := utils.MakeChainDatabase(ctx, stack, true, false)
 	defer db.Close()
 	var (
-		it        = rawdb.NewKeyLengthIterator(db.NewIterator(prefix, start), 32)
+		it        ethdb.Iterator
 		hasher    = crypto.NewKeccakState()
 		got       = make([]byte, 32)
 		errs      int
@@ -517,6 +527,11 @@ func checkStateContent(ctx *cli.Context) error {
 		startTime = time.Now()
 		lastLog   = time.Now()
 	)
+	if stack.CheckIfMultiDataBase() {
+		it = rawdb.NewKeyLengthIterator(db.StateStore().NewIterator(prefix, start), 32)
+	} else {
+		it = rawdb.NewKeyLengthIterator(db.NewIterator(prefix, start), 32)
+	}
 	for it.Next() {
 		count++
 		k := it.Key()
@@ -563,9 +578,11 @@ func dbStats(ctx *cli.Context) error {
 	defer db.Close()
 
 	showLeveldbStats(db)
-	if db.StateStore() != nil {
+	if stack.CheckIfMultiDataBase() {
 		fmt.Println("show stats of state store")
 		showLeveldbStats(db.StateStore())
+		fmt.Println("show stats of block store")
+		showLeveldbStats(db.BlockStore())
 	}
 
 	return nil
@@ -581,10 +598,11 @@ func dbCompact(ctx *cli.Context) error {
 	log.Info("Stats before compaction")
 	showLeveldbStats(db)
 
-	statediskdb := db.StateStore()
-	if statediskdb != nil {
+	if stack.CheckIfMultiDataBase() {
 		fmt.Println("show stats of state store")
-		showLeveldbStats(statediskdb)
+		showLeveldbStats(db.StateStore())
+		fmt.Println("show stats of block store")
+		showLeveldbStats(db.BlockStore())
 	}
 
 	log.Info("Triggering compaction")
@@ -593,8 +611,12 @@ func dbCompact(ctx *cli.Context) error {
 		return err
 	}
 
-	if statediskdb != nil {
-		if err := statediskdb.Compact(nil, nil); err != nil {
+	if stack.CheckIfMultiDataBase() {
+		if err := db.StateStore().Compact(nil, nil); err != nil {
+			log.Error("Compact err", "error", err)
+			return err
+		}
+		if err := db.BlockStore().Compact(nil, nil); err != nil {
 			log.Error("Compact err", "error", err)
 			return err
 		}
@@ -602,9 +624,11 @@ func dbCompact(ctx *cli.Context) error {
 
 	log.Info("Stats after compaction")
 	showLeveldbStats(db)
-	if statediskdb != nil {
+	if stack.CheckIfMultiDataBase() {
 		fmt.Println("show stats of state store after compaction")
-		showLeveldbStats(statediskdb)
+		showLeveldbStats(db.StateStore())
+		fmt.Println("show stats of block store after compaction")
+		showLeveldbStats(db.BlockStore())
 	}
 	return nil
 }
@@ -625,18 +649,18 @@ func dbGet(ctx *cli.Context) error {
 		log.Info("Could not decode the key", "error", err)
 		return err
 	}
-
-	statediskdb := db.StateStore()
-	data, err := db.Get(key)
-	if err != nil {
-		// if separate trie db exist, try to get it from separate db
-		if statediskdb != nil {
-			statedata, dberr := statediskdb.Get(key)
-			if dberr == nil {
-				fmt.Printf("key %#x: %#x\n", key, statedata)
-				return nil
-			}
+	opDb := db
+	if stack.CheckIfMultiDataBase() {
+		keyType := rawdb.DataTypeByKey(key)
+		if keyType == rawdb.StateDataType {
+			opDb = db.StateStore()
+		} else if keyType == rawdb.BlockDataType {
+			opDb = db.BlockStore()
 		}
+	}
+
+	data, err := opDb.Get(key)
+	if err != nil {
 		log.Info("Get operation failed", "key", fmt.Sprintf("%#x", key), "error", err)
 		return err
 	}
@@ -799,14 +823,100 @@ func dbDelete(ctx *cli.Context) error {
 		log.Info("Could not decode the key", "error", err)
 		return err
 	}
-	data, err := db.Get(key)
+	opDb := db
+	if stack.CheckIfMultiDataBase() {
+		keyType := rawdb.DataTypeByKey(key)
+		if keyType == rawdb.StateDataType {
+			opDb = db.StateStore()
+		} else if keyType == rawdb.BlockDataType {
+			opDb = db.BlockStore()
+		}
+	}
+
+	data, err := opDb.Get(key)
 	if err == nil {
 		fmt.Printf("Previous value: %#x\n", data)
 	}
-	if err = db.Delete(key); err != nil {
+	if err = opDb.Delete(key); err != nil {
 		log.Info("Delete operation returned an error", "key", fmt.Sprintf("%#x", key), "error", err)
 		return err
 	}
+	return nil
+}
+
+// dbDeleteTrieState deletes all trie state related key-value pairs from the database and the ancient state store.
+func dbDeleteTrieState(ctx *cli.Context) error {
+	if ctx.NArg() > 0 {
+		return fmt.Errorf("no arguments required")
+	}
+
+	stack, config := makeConfigNode(ctx)
+	defer stack.Close()
+
+	db := utils.MakeChainDatabase(ctx, stack, false, false)
+	defer db.Close()
+
+	var (
+		err   error
+		start = time.Now()
+	)
+
+	// If separate trie db exists, delete all files in the db folder
+	if db.StateStore() != nil {
+		statePath := filepath.Join(stack.ResolvePath("chaindata"), "state")
+		log.Info("Removing separate trie database", "path", statePath)
+		err = filepath.Walk(statePath, func(path string, info os.FileInfo, err error) error {
+			if err != nil {
+				return err
+			}
+			if path != statePath {
+				fileInfo, err := os.Lstat(path)
+				if err != nil {
+					return err
+				}
+				if !fileInfo.IsDir() {
+					os.Remove(path)
+				}
+			}
+			return nil
+		})
+		log.Info("Separate trie database deleted", "err", err, "elapsed", common.PrettyDuration(time.Since(start)))
+		return err
+	}
+
+	// Delete KV pairs from the database
+	err = rawdb.DeleteTrieState(db)
+	if err != nil {
+		return err
+	}
+
+	// Remove the full node ancient database
+	dbPath := config.Eth.DatabaseFreezer
+	switch {
+	case dbPath == "":
+		dbPath = filepath.Join(stack.ResolvePath("chaindata"), "ancient/state")
+	case !filepath.IsAbs(dbPath):
+		dbPath = config.Node.ResolvePath(dbPath)
+	}
+
+	if !common.FileExist(dbPath) {
+		return nil
+	}
+
+	log.Info("Removing ancient state database", "path", dbPath)
+	start = time.Now()
+	filepath.Walk(dbPath, func(path string, info os.FileInfo, err error) error {
+		if dbPath == path {
+			return nil
+		}
+		if !info.IsDir() {
+			os.Remove(path)
+			return nil
+		}
+		return filepath.SkipDir
+	})
+	log.Info("State database successfully deleted", "path", dbPath, "elapsed", common.PrettyDuration(time.Since(start)))
+
 	return nil
 }
 
@@ -837,11 +947,22 @@ func dbPut(ctx *cli.Context) error {
 		log.Info("Could not decode the value", "error", err)
 		return err
 	}
-	data, err = db.Get(key)
+
+	opDb := db
+	if stack.CheckIfMultiDataBase() {
+		keyType := rawdb.DataTypeByKey(key)
+		if keyType == rawdb.StateDataType {
+			opDb = db.StateStore()
+		} else if keyType == rawdb.BlockDataType {
+			opDb = db.BlockStore()
+		}
+	}
+
+	data, err = opDb.Get(key)
 	if err == nil {
 		fmt.Printf("Previous value: %#x\n", data)
 	}
-	return db.Put(key, value)
+	return opDb.Put(key, value)
 }
 
 // dbDumpTrie shows the key-value slots of a given storage trie
@@ -854,8 +975,7 @@ func dbDumpTrie(ctx *cli.Context) error {
 
 	db := utils.MakeChainDatabase(ctx, stack, true, false)
 	defer db.Close()
-
-	triedb := utils.MakeTrieDatabase(ctx, db, false, true, false)
+	triedb := utils.MakeTrieDatabase(ctx, stack, db, false, true, false)
 	defer triedb.Close()
 
 	var (
@@ -933,7 +1053,7 @@ func freezerInspect(ctx *cli.Context) error {
 	stack, _ := makeConfigNode(ctx)
 	ancient := stack.ResolveAncient("chaindata", ctx.String(utils.AncientFlag.Name))
 	stack.Close()
-	return rawdb.InspectFreezerTable(ancient, freezer, table, start, end)
+	return rawdb.InspectFreezerTable(ancient, freezer, table, start, end, stack.CheckIfMultiDataBase())
 }
 
 func importLDBdata(ctx *cli.Context) error {
@@ -1073,11 +1193,11 @@ func showMetaData(ctx *cli.Context) error {
 	defer stack.Close()
 	db := utils.MakeChainDatabase(ctx, stack, true, false)
 	defer db.Close()
-	ancients, err := db.Ancients()
+	ancients, err := db.BlockStore().Ancients()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error accessing ancients: %v", err)
 	}
-	data := rawdb.ReadChainMetadata(db)
+	data := rawdb.ReadChainMetadataFromMultiDatabase(db)
 	data = append(data, []string{"frozen", fmt.Sprintf("%d items", ancients)})
 	data = append(data, []string{"snapshotGenerator", snapshot.ParseGeneratorStatus(rawdb.ReadSnapshotGenerator(db))})
 	if b := rawdb.ReadHeadBlock(db); b != nil {
@@ -1138,8 +1258,8 @@ func hbss2pbss(ctx *cli.Context) error {
 		log.Info("hbss2pbss triedb", "scheme", triedb.Scheme())
 		defer triedb.Close()
 
-		headerHash := rawdb.ReadHeadHeaderHash(db)
-		blockNumber := rawdb.ReadHeaderNumber(db, headerHash)
+		headerHash := rawdb.ReadHeadHeaderHash(db.BlockStore())
+		blockNumber := rawdb.ReadHeaderNumber(db.BlockStore(), headerHash)
 		if blockNumber == nil {
 			log.Error("read header number failed.")
 			return fmt.Errorf("read header number failed")

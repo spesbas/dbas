@@ -147,12 +147,12 @@ var (
 		LondonBlock:         big.NewInt(31302048),
 		HertzBlock:          big.NewInt(31302048),
 		HertzfixBlock:       big.NewInt(34140700),
-		// UnixTime: 1705996800 is January 23, 2024 8:00:00 AM UTC
-		ShanghaiTime: newUint64(1705996800),
-		KeplerTime:   newUint64(1705996800),
-
-		// TODO
-		FeynmanTime: nil,
+		ShanghaiTime:        newUint64(1705996800), // 2024-01-23 08:00:00 AM UTC
+		KeplerTime:          newUint64(1705996800), // 2024-01-23 08:00:00 AM UTC
+		FeynmanTime:         newUint64(1713419340), // 2024-04-18 05:49:00 AM UTC
+		FeynmanFixTime:      newUint64(1713419340), // 2024-04-18 05:49:00 AM UTC
+		CancunTime:          newUint64(1718863500), // 2024-06-20 06:05:00 AM UTC
+		HaberTime:           newUint64(1718863500), // 2024-06-20 06:05:00 AM UTC
 
 		Parlia: &ParliaConfig{
 			Period: 3,
@@ -186,10 +186,12 @@ var (
 		LondonBlock:         big.NewInt(31103030),
 		HertzBlock:          big.NewInt(31103030),
 		HertzfixBlock:       big.NewInt(35682300),
-		// UnixTime: 1702972800 is December 19, 2023 8:00:00 AM UTC
-		ShanghaiTime: newUint64(1702972800),
-		KeplerTime:   newUint64(1702972800),
-		FeynmanTime:  newUint64(1710136800),
+		ShanghaiTime:        newUint64(1702972800), // 2023-12-19 8:00:00 AM UTC
+		KeplerTime:          newUint64(1702972800),
+		FeynmanTime:         newUint64(1710136800), // 2024-03-11 6:00:00 AM UTC
+		FeynmanFixTime:      newUint64(1711342800), // 2024-03-25 5:00:00 AM UTC
+		CancunTime:          newUint64(1713330442), // 2024-04-17 05:07:22 AM UTC
+		HaberTime:           newUint64(1716962820), // 2024-05-29 06:07:00 AM UTC
 
 		Parlia: &ParliaConfig{
 			Period: 3,
@@ -227,6 +229,9 @@ var (
 		ShanghaiTime:        newUint64(0),
 		KeplerTime:          newUint64(0),
 		FeynmanTime:         newUint64(0),
+		FeynmanFixTime:      newUint64(0),
+		CancunTime:          newUint64(0),
+		HaberTime:           newUint64(0),
 
 		Parlia: &ParliaConfig{
 			Period: 3,
@@ -260,6 +265,12 @@ var (
 		LondonBlock:         big.NewInt(0),
 		HertzBlock:          big.NewInt(0),
 		HertzfixBlock:       big.NewInt(0),
+		ShanghaiTime:        newUint64(0),
+		KeplerTime:          newUint64(0),
+		FeynmanTime:         newUint64(0),
+		FeynmanFixTime:      newUint64(0),
+		CancunTime:          newUint64(0),
+
 		Parlia: &ParliaConfig{
 			Period: 3,
 			Epoch:  200,
@@ -312,6 +323,7 @@ var (
 		ArrowGlacierBlock:             big.NewInt(0),
 		GrayGlacierBlock:              big.NewInt(0),
 		ShanghaiTime:                  newUint64(0),
+		CancunTime:                    newUint64(0),
 		TerminalTotalDifficulty:       big.NewInt(0),
 		TerminalTotalDifficultyPassed: true,
 	}
@@ -491,12 +503,14 @@ type ChainConfig struct {
 
 	// Fork scheduling was switched from blocks to timestamps here
 
-	ShanghaiTime *uint64 `json:"shanghaiTime,omitempty"` // Shanghai switch time (nil = no fork, 0 = already on shanghai)
-	KeplerTime   *uint64 `json:"keplerTime,omitempty"`   // Kepler switch time (nil = no fork, 0 = already activated)
-	FeynmanTime  *uint64 `json:"feynmanTime,omitempty"`  // Feynman switch time (nil = no fork, 0 = already activated)
-	CancunTime   *uint64 `json:"cancunTime,omitempty"`   // Cancun switch time (nil = no fork, 0 = already on cancun)
-	PragueTime   *uint64 `json:"pragueTime,omitempty"`   // Prague switch time (nil = no fork, 0 = already on prague)
-	VerkleTime   *uint64 `json:"verkleTime,omitempty"`   // Verkle switch time (nil = no fork, 0 = already on verkle)
+	ShanghaiTime   *uint64 `json:"shanghaiTime,omitempty"`   // Shanghai switch time (nil = no fork, 0 = already on shanghai)
+	KeplerTime     *uint64 `json:"keplerTime,omitempty"`     // Kepler switch time (nil = no fork, 0 = already activated)
+	FeynmanTime    *uint64 `json:"feynmanTime,omitempty"`    // Feynman switch time (nil = no fork, 0 = already activated)
+	FeynmanFixTime *uint64 `json:"feynmanFixTime,omitempty"` // FeynmanFix switch time (nil = no fork, 0 = already activated)
+	CancunTime     *uint64 `json:"cancunTime,omitempty"`     // Cancun switch time (nil = no fork, 0 = already on cancun)
+	HaberTime      *uint64 `json:"haberTime,omitempty"`      // Haber switch time (nil = no fork, 0 = already on haber)
+	PragueTime     *uint64 `json:"pragueTime,omitempty"`     // Prague switch time (nil = no fork, 0 = already on prague)
+	VerkleTime     *uint64 `json:"verkleTime,omitempty"`     // Verkle switch time (nil = no fork, 0 = already on verkle)
 
 	// TerminalTotalDifficulty is the amount of total difficulty reached by
 	// the network that triggers the consensus upgrade.
@@ -590,7 +604,22 @@ func (c *ChainConfig) String() string {
 		FeynmanTime = big.NewInt(0).SetUint64(*c.FeynmanTime)
 	}
 
-	return fmt.Sprintf("{ChainID: %v Homestead: %v DAO: %v DAOSupport: %v EIP150: %v EIP155: %v EIP158: %v Byzantium: %v Constantinople: %v Petersburg: %v Istanbul: %v, Muir Glacier: %v, Ramanujan: %v, Niels: %v, MirrorSync: %v, Bruno: %v, Berlin: %v, YOLO v3: %v, CatalystBlock: %v, London: %v, ArrowGlacier: %v, MergeFork:%v, Euler: %v, Gibbs: %v, Nano: %v, Moran: %v, Planck: %v,Luban: %v, Plato: %v, Hertz: %v, Hertzfix: %v, ShanghaiTime: %v, KeplerTime: %v, FeynmanTime: %v, Engine: %v}",
+	var FeynmanFixTime *big.Int
+	if c.FeynmanFixTime != nil {
+		FeynmanFixTime = big.NewInt(0).SetUint64(*c.FeynmanFixTime)
+	}
+
+	var CancunTime *big.Int
+	if c.CancunTime != nil {
+		CancunTime = big.NewInt(0).SetUint64(*c.CancunTime)
+	}
+
+	var HaberTime *big.Int
+	if c.HaberTime != nil {
+		HaberTime = big.NewInt(0).SetUint64(*c.HaberTime)
+	}
+
+	return fmt.Sprintf("{ChainID: %v Homestead: %v DAO: %v DAOSupport: %v EIP150: %v EIP155: %v EIP158: %v Byzantium: %v Constantinople: %v Petersburg: %v Istanbul: %v, Muir Glacier: %v, Ramanujan: %v, Niels: %v, MirrorSync: %v, Bruno: %v, Berlin: %v, YOLO v3: %v, CatalystBlock: %v, London: %v, ArrowGlacier: %v, MergeFork:%v, Euler: %v, Gibbs: %v, Nano: %v, Moran: %v, Planck: %v,Luban: %v, Plato: %v, Hertz: %v, Hertzfix: %v, ShanghaiTime: %v, KeplerTime: %v, FeynmanTime: %v, FeynmanFixTime: %v, CancunTime: %v, HaberTime: %v, Engine: %v}",
 		c.ChainID,
 		c.HomesteadBlock,
 		c.DAOForkBlock,
@@ -625,6 +654,9 @@ func (c *ChainConfig) String() string {
 		ShanghaiTime,
 		KeplerTime,
 		FeynmanTime,
+		FeynmanFixTime,
+		CancunTime,
+		HaberTime,
 		engine,
 	)
 }
@@ -873,9 +905,28 @@ func (c *ChainConfig) IsOnFeynman(currentBlockNumber *big.Int, lastBlockTime uin
 	return !c.IsFeynman(lastBlockNumber, lastBlockTime) && c.IsFeynman(currentBlockNumber, currentBlockTime)
 }
 
+// IsFeynmanFix returns whether time is either equal to the FeynmanFix fork time or greater.
+func (c *ChainConfig) IsFeynmanFix(num *big.Int, time uint64) bool {
+	return c.IsLondon(num) && isTimestampForked(c.FeynmanFixTime, time)
+}
+
+// IsOnFeynmanFix returns whether currentBlockTime is either equal to the FeynmanFix fork time or greater firstly.
+func (c *ChainConfig) IsOnFeynmanFix(currentBlockNumber *big.Int, lastBlockTime uint64, currentBlockTime uint64) bool {
+	lastBlockNumber := new(big.Int)
+	if currentBlockNumber.Cmp(big.NewInt(1)) >= 0 {
+		lastBlockNumber.Sub(currentBlockNumber, big.NewInt(1))
+	}
+	return !c.IsFeynmanFix(lastBlockNumber, lastBlockTime) && c.IsFeynmanFix(currentBlockNumber, currentBlockTime)
+}
+
 // IsCancun returns whether num is either equal to the Cancun fork time or greater.
 func (c *ChainConfig) IsCancun(num *big.Int, time uint64) bool {
 	return c.IsLondon(num) && isTimestampForked(c.CancunTime, time)
+}
+
+// IsHaber returns whether time is either equal to the Haber fork time or greater.
+func (c *ChainConfig) IsHaber(num *big.Int, time uint64) bool {
+	return c.IsLondon(num) && isTimestampForked(c.HaberTime, time)
 }
 
 // IsPrague returns whether num is either equal to the Prague fork time or greater.
@@ -939,7 +990,9 @@ func (c *ChainConfig) CheckConfigForkOrder() error {
 		{name: "hertzfixBlock", block: c.HertzfixBlock},
 		{name: "keplerTime", timestamp: c.KeplerTime},
 		{name: "feynmanTime", timestamp: c.FeynmanTime},
-		{name: "cancunTime", timestamp: c.CancunTime, optional: true},
+		{name: "feynmanFixTime", timestamp: c.FeynmanFixTime},
+		{name: "cancunTime", timestamp: c.CancunTime},
+		{name: "haberTime", timestamp: c.HaberTime},
 		{name: "pragueTime", timestamp: c.PragueTime, optional: true},
 		{name: "verkleTime", timestamp: c.VerkleTime, optional: true},
 	} {
@@ -1080,6 +1133,9 @@ func (c *ChainConfig) checkCompatible(newcfg *ChainConfig, headNumber *big.Int, 
 	}
 	if isForkTimestampIncompatible(c.FeynmanTime, newcfg.FeynmanTime, headTimestamp) {
 		return newTimestampCompatError("Feynman fork timestamp", c.FeynmanTime, newcfg.FeynmanTime)
+	}
+	if isForkTimestampIncompatible(c.FeynmanFixTime, newcfg.FeynmanFixTime, headTimestamp) {
+		return newTimestampCompatError("FeynmanFix fork timestamp", c.FeynmanFixTime, newcfg.FeynmanFixTime)
 	}
 	if isForkTimestampIncompatible(c.CancunTime, newcfg.CancunTime, headTimestamp) {
 		return newTimestampCompatError("Cancun fork timestamp", c.CancunTime, newcfg.CancunTime)
@@ -1229,7 +1285,7 @@ func newTimestampCompatError(what string, storedtime, newtime *uint64) *ConfigCo
 		NewTime:      newtime,
 		RewindToTime: 0,
 	}
-	if rew != nil {
+	if rew != nil && *rew != 0 {
 		err.RewindToTime = *rew - 1
 	}
 	return err
@@ -1239,7 +1295,13 @@ func (err *ConfigCompatError) Error() string {
 	if err.StoredBlock != nil {
 		return fmt.Sprintf("mismatching %s in database (have block %d, want block %d, rewindto block %d)", err.What, err.StoredBlock, err.NewBlock, err.RewindToBlock)
 	}
-	return fmt.Sprintf("mismatching %s in database (have timestamp %d, want timestamp %d, rewindto timestamp %d)", err.What, err.StoredTime, err.NewTime, err.RewindToTime)
+
+	if err.StoredTime == nil {
+		return fmt.Sprintf("mismatching %s in database (have timestamp nil, want timestamp %d, rewindto timestamp %d)", err.What, *err.NewTime, err.RewindToTime)
+	} else if err.NewTime == nil {
+		return fmt.Sprintf("mismatching %s in database (have timestamp %d, want timestamp nil, rewindto timestamp %d)", err.What, *err.StoredTime, err.RewindToTime)
+	}
+	return fmt.Sprintf("mismatching %s in database (have timestamp %d, want timestamp %d, rewindto timestamp %d)", err.What, *err.StoredTime, *err.NewTime, err.RewindToTime)
 }
 
 // Rules wraps ChainConfig and is merely syntactic sugar or can be used for functions
@@ -1260,8 +1322,8 @@ type Rules struct {
 	IsPlato                                                 bool
 	IsHertz                                                 bool
 	IsHertzfix                                              bool
-	IsShanghai, IsKepler, IsFeynman, IsCancun, IsPrague     bool
-	IsVerkle                                                bool
+	IsShanghai, IsKepler, IsFeynman, IsCancun, IsHaber      bool
+	IsPrague, IsVerkle                                      bool
 }
 
 // Rules ensures c's ChainID is not nil.
@@ -1296,6 +1358,7 @@ func (c *ChainConfig) Rules(num *big.Int, isMerge bool, timestamp uint64) Rules 
 		IsKepler:         c.IsKepler(num, timestamp),
 		IsFeynman:        c.IsFeynman(num, timestamp),
 		IsCancun:         c.IsCancun(num, timestamp),
+		IsHaber:          c.IsHaber(num, timestamp),
 		IsPrague:         c.IsPrague(num, timestamp),
 		IsVerkle:         c.IsVerkle(num, timestamp),
 	}

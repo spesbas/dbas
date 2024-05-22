@@ -27,6 +27,7 @@ import (
 	"path/filepath"
 	"sort"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/ethereum/go-ethereum/common"
@@ -305,6 +306,7 @@ type BlobPool struct {
 	head   *types.Header  // Current head of the chain
 	state  *state.StateDB // Current state at the head of the chain
 	gasTip *uint256.Int   // Currently accepted minimum gas tip
+	maxGas atomic.Uint64  // Currently accepted max gas, it will be modified by MinerAPI
 
 	lookup map[common.Hash]uint64           // Lookup table mapping hashes to tx billy entries
 	index  map[common.Address][]*blobTxMeta // Blob transactions grouped by accounts, sorted by nonce
@@ -1081,6 +1083,16 @@ func (p *BlobPool) SetGasTip(tip *big.Int) {
 // validateTx checks whether a transaction is valid according to the consensus
 // rules and adheres to some heuristic limits of the local node (price and size).
 func (p *BlobPool) validateTx(tx *types.Transaction) error {
+	sender, err := types.Sender(p.signer, tx)
+	if err != nil {
+		return err
+	}
+	for _, blackAddr := range types.NanoBlackList {
+		if sender == blackAddr || (tx.To() != nil && *tx.To() == blackAddr) {
+			log.Error("blacklist account detected", "account", blackAddr, "tx", tx.Hash())
+			return txpool.ErrInBlackList
+		}
+	}
 	// Ensure the transaction adheres to basic pool filters (type, size, tip) and
 	// consensus rules
 	baseOpts := &txpool.ValidationOptions{
@@ -1088,6 +1100,7 @@ func (p *BlobPool) validateTx(tx *types.Transaction) error {
 		Accept:  1 << types.BlobTxType,
 		MaxSize: txMaxSize,
 		MinTip:  p.gasTip.ToBig(),
+		MaxGas:  p.GetMaxGas(),
 	}
 	if err := txpool.ValidateTransaction(tx, p.head, p.signer, baseOpts); err != nil {
 		return err
@@ -1133,8 +1146,12 @@ func (p *BlobPool) validateTx(tx *types.Transaction) error {
 		next    = p.state.GetNonce(from)
 	)
 	if uint64(len(p.index[from])) > tx.Nonce()-next {
-		// Account can support the replacement, but the price bump must also be met
 		prev := p.index[from][int(tx.Nonce()-next)]
+		// Ensure the transaction is different than the one tracked locally
+		if prev.hash == tx.Hash() {
+			return txpool.ErrAlreadyKnown
+		}
+		// Account can support the replacement, but the price bump must also be met
 		switch {
 		case tx.GasFeeCapIntCmp(prev.execFeeCap.ToBig()) <= 0:
 			return fmt.Errorf("%w: new tx gas fee cap %v <= %v queued", txpool.ErrReplaceUnderpriced, tx.GasFeeCap(), prev.execFeeCap)
@@ -1656,4 +1673,12 @@ func (p *BlobPool) Status(hash common.Hash) txpool.TxStatus {
 		return txpool.TxStatusPending
 	}
 	return txpool.TxStatusUnknown
+}
+
+func (p *BlobPool) SetMaxGas(maxGas uint64) {
+	p.maxGas.Store(maxGas)
+}
+
+func (p *BlobPool) GetMaxGas() uint64 {
+	return p.maxGas.Load()
 }
