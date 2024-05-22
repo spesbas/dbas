@@ -122,7 +122,7 @@ var (
 	}
 
 	BSCChainConfig = &ChainConfig{
-		ChainID:             big.NewInt(56),
+		ChainID:             big.NewInt(1118),
 		HomesteadBlock:      big.NewInt(0),
 		EIP150Block:         big.NewInt(0),
 		EIP155Block:         big.NewInt(0),
